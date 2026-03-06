@@ -1,45 +1,44 @@
-# Bu iş akışının adı
 name: Projeyi Derle
 
-# Bu iş akışının ne zaman tetikleneceğini belirler
 on:
-  # Main branch'e yapılan her push işleminde çalışır
   push:
     branches: [ "main" ]
-  # Main branch'e yönelik her pull request'te çalışır
   pull_request:
     branches: [ "main" ]
 
 jobs:
-  # "build" adında tek bir görev tanımlar
   build:
-    # Görevin çalışacağı işletim sistemini belirtir (macOS'in en son sürümü)
     runs-on: macos-latest
 
     steps:
-    # 1. Adım: Kodları Checkout Etme (v4)
-    # Deponuzdaki kodları çalıştırılacak ortama indirir.
     - name: Kodları Checkout Et
       uses: actions/checkout@v4
       with:
-        # Theos'u bir alt modül olarak kullanıyorsanız bu satırı aktif edin
-        # submodules: 'recursive'
+        # submodules: 'recursive' # Eğer alt modül kullanıyorsanız bu satırı aktif edin
 
-    # 2. Adım: Theos Kurulumu
-    # iOS Tweak geliştirme ortamı olan Theos'u kurar.
     - name: Theos Kurulumu
       uses: Theos/install-theos@v1
 
-    # 3. Adım: Projeyi Derleme
-    # Makefile dosyanızdaki talimatlara göre projeyi derler.
+    # 'id' ekleyerek bu adımın sonucunu daha sonra kullanabiliriz
     - name: Projeyi Derle
+      id: build_step
       run: make
 
-    # 4. Adım: Derlenmiş Dosyaları Arşivleme (v4)
-    # Derleme sonucu oluşan .deb paketini daha sonra indirebilmek için arşivler.
-    # v4 ile 'path' altında birden fazla dosya/dizin belirtmek daha kolaydır.
+    # YENİ ADIM: Derleme çıktısını kontrol et
+    # Bu adım, 'packages' dizinini ve içindekileri listeleyerek hata ayıklamayı kolaylaştırır.
+    # 'if: always()' sayesinde önceki adım başarısız olsa bile çalışır.
+    - name: Derleme Çıktısını Kontrol Et
+      if: always()
+      run: |
+        echo "Derleme sonrası dosya yapısı kontrol ediliyor..."
+        ls -R
+
+    # DÜZELTİLMİŞ ADIM: Derlenmiş Dosyaları Arşivle
+    # Sadece 'build_step' başarılı olduğunda çalışır.
+    # Bu, 'make' komutu hata verirse bu adımın atlanmasını ve hata vermemesini sağlar.
     - name: Derlenmiş Dosyaları Arşivle
       uses: actions/upload-artifact@v4
+      if: steps.build_step.outcome == 'success'
       with:
         name: ESP-Tweak-Package
         path: packages/*.deb
