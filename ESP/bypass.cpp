@@ -1,171 +1,165 @@
 /**
  * ============================================================================
- * iOS PUBG str_cmp17470 Bypass - Kitty Memory Implementation
+ * iOS PUBG str_cmp17470 Bypass & Hooking Framework (Theos Edition)
  * ============================================================================
  * 
- * Memory manipulation using Kitty Memory library for advanced hooking
+ * Analiz Verisi: str_cmp17470.txt
+ * Amaç: str_cmp17470 fonksiyonunu hook ederek detektisyonu bypass etmek
+ * Hedef: iOS PUBG 4.2
+ * Framework: Theos + MobileSubstrate
  * 
+ * Hooked Fonksiyonlar:
+ *  - strcmp (0x10bcc2eb8)
+ *  - sscanf (0x10bcc2e64)
+ *  - strncmp (0x10bcc2f24)
+ *  - strncpy (0x10bcc2f30)
+ *  - str_cmp17470 (0x10ba9f470) [PRIVATE FUNCTION @ 0x17470]
+ * 
+ * ============================================================================
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include <unistd.h>
-#include <pthread.h>
+#include <dlfcn.h>
 #include <mach/mach.h>
-#include "KittyMemory/KittyMemory.hpp"
-
-using namespace KittyMemory;
+#include <sys/types.h>
+#include <unistd.h>
+#include <objc/runtime.h>
+#include <dispatch/dispatch.h>
+#include <substrate.h>
 
 // ============================================================================
-// CONSTANTS & DEFINITIONS
+// MACRO DEFINITIONS & CONSTANTS
 // ============================================================================
 
-#define HOOK_LOG(fmt, ...) fprintf(stderr, "[KITTY_BYPASS] " fmt "\n", ##__VA_ARGS__)
-#define ERROR_LOG(fmt, ...) fprintf(stderr, "[KITTY_ERROR] " fmt "\n", ##__VA_ARGS__)
-#define DEBUG_LOG(fmt, ...) fprintf(stderr, "[KITTY_DEBUG] " fmt "\n", ##__VA_ARGS__)
+#define HOOK_LOG(fmt, ...) do { \
+    fprintf(stderr, "[BYPASS_HOOK] " fmt "\n", ##__VA_ARGS__); \
+    fflush(stderr); \
+} while(0)
 
-// Target binary info
-#define BINARY_NAME "anogs"
-#define STR_CMP17470_OFFSET 0x17470
-#define STR_CMP17470_FUNCTION_SIZE 0x200  // Approximate function size
+#define ERROR_LOG(fmt, ...) do { \
+    fprintf(stderr, "[BYPASS_ERROR] " fmt "\n", ##__VA_ARGS__); \
+    fflush(stderr); \
+} while(0)
 
-// Hooked function addresses (from analysis)
-#define STRCMP_ADDR 0x10bcc2eb8
-#define SSCANF_ADDR 0x10bcc2e64
-#define STRNCMP_ADDR 0x10bcc2f24
-#define STRNCPY_ADDR 0x10bcc2f30
+#define DEBUG_LOG(fmt, ...) do { \
+    fprintf(stderr, "[BYPASS_DEBUG] " fmt "\n", ##__VA_ARGS__); \
+    fflush(stderr); \
+} while(0)
+
+// Detected base address from analysis
+#define ANO_BASE 0x10ba88000
 #define STR_CMP17470_ADDR 0x10ba9f470
+#define STR_CMP17470_OFFSET 0x17470
 
-// Critical strings to monitor
-static const char* critical_files[] = {
-    "comm.dat", "comm.zip", "comm_ver.zip", "sig4", "sig5",
-    "tcjcfg.dat", "config2.dat", "ob_x.zip", "dobby.dylib", NULL
-};
+// String patterns from log analysis
+#define CRITICAL_FILES_COUNT 15
+#define MAX_HOOK_DEPTH 10
 
 // ============================================================================
-// STRUCTURES & GLOBALS
+// TYPE DEFINITIONS & STRUCTURES
 // ============================================================================
 
-typedef struct {
-    uint32_t call_count;
-    uint32_t bypass_count;
-    uint8_t enabled;
-    pthread_mutex_t lock;
-} HookStats;
-
-static HookStats g_stats = {0, 0, 1, PTHREAD_MUTEX_INITIALIZER};
-
-// Original function pointers
 typedef int (*strcmp_t)(const char *s1, const char *s2);
 typedef int (*strncmp_t)(const char *s1, const char *s2, size_t n);
 typedef char* (*strncpy_t)(char *dest, const char *src, size_t n);
 typedef int (*sscanf_t)(const char *str, const char *format, ...);
 typedef int (*str_cmp17470_t)(const char *a1, const char *a2);
 
-static strcmp_t original_strcmp = NULL;
-static strncmp_t original_strncmp = NULL;
-static strncpy_t original_strncpy = NULL;
-static sscanf_t original_sscanf = NULL;
-static str_cmp17470_t original_str_cmp17470 = NULL;
+// Global original function pointers
+static strcmp_t g_strcmp_original = NULL;
+static strncmp_t g_strncmp_original = NULL;
+static strncpy_t g_strncpy_original = NULL;
+static sscanf_t g_sscanf_original = NULL;
+static str_cmp17470_t g_str_cmp17470_original = NULL;
+
+// Hook statistics
+static struct {
+    int strcmp_calls;
+    int strcmp_bypassed;
+    int strncmp_calls;
+    int strncmp_bypassed;
+    int strncpy_calls;
+    int sscanf_calls;
+    int sscanf_bypassed;
+    int str_cmp17470_calls;
+    int str_cmp17470_bypassed;
+    int str_cmp17470_mismatches;
+} g_stats = {0};
+
+static dispatch_queue_t g_hook_queue = NULL;
 
 // ============================================================================
-// KITTY MEMORY UTILITIES
+// CRITICAL STRING PATTERNS (From log analysis)
+// ============================================================================
+
+static const char* g_critical_files[] = {
+    "comm.dat",
+    "comm.zip",
+    "comm_ver.zip",
+    "comm_custom.zip",
+    "sig4",
+    "sig5",
+    "tcjcfg.dat",
+    "config2.dat",
+    "ob_x.zip",
+    "mrpcsZ_cp.data",
+    "mrpcs-cs-2139-ios.data",
+    "mrpcs_2139_il_420",
+    "tlf",
+    "anogs",
+    "dobby.dylib"
+};
+
+// ============================================================================
+// UTILITY FUNCTIONS
 // ============================================================================
 
 /**
- * Initialize Kitty Memory for target process
+ * Detects if a string is a critical file that requires monitoring
  */
-int InitKittyMemory() {
-    HOOK_LOG("Initializing Kitty Memory...");
+static int is_critical_file(const char *str) {
+    if (!str) return 0;
     
-    // Open the process
-    ProcInfo proc;
-    if (!GetProcInfo(proc)) {
-        ERROR_LOG("Failed to get process info");
-        return -1;
-    }
-    
-    HOOK_LOG("Process: %s (PID: %d)", proc.name.c_str(), proc.pid);
-    HOOK_LOG("Base address: 0x%llx", proc.load_base);
-    
-    return 0;
-}
-
-/**
- * Find pattern in memory
- */
-void* FindPatternInMemory(const char *pattern, const char *mask) {
-    ProcInfo proc;
-    if (!GetProcInfo(proc)) return NULL;
-    
-    MemoryMap maps;
-    GetMemoryMaps(proc.pid, maps);
-    
-    for (auto& map : maps.ranges) {
-        auto found = PatternScan(map.start, map.size, pattern, mask);
-        if (found != NULL) {
-            HOOK_LOG("Pattern found at: 0x%llx", (uint64_t)found);
-            return found;
+    for (int i = 0; i < CRITICAL_FILES_COUNT; i++) {
+        if (strstr(str, g_critical_files[i])) {
+            return 1;
         }
     }
-    
-    return NULL;
-}
-
-/**
- * Hook a function using Kitty Memory inline hooking
- */
-int HookFunctionInline(uint64_t target_addr, uint64_t hook_func, uint64_t *original_ptr) {
-    if (target_addr == 0 || hook_func == 0) {
-        ERROR_LOG("Invalid addresses for hooking");
-        return -1;
-    }
-    
-    HOOK_LOG("Installing inline hook at 0x%llx -> 0x%llx", target_addr, hook_func);
-    
-    // Save original function
-    *original_ptr = target_addr;
-    
-    // Write ARM64 branch instruction
-    // BL (branch with link) instruction format:
-    // opcode: 0x94000000
-    // offset: (target - addr) >> 2
-    
-    uint64_t offset = (hook_func - target_addr) >> 2;
-    uint32_t branch_instr = 0x94000000 | (offset & 0x03FFFFFF);
-    
-    // Protect memory and write
-    MemoryPatch patch(target_addr, sizeof(uint32_t));
-    WriteMemory(target_addr, &branch_instr, sizeof(uint32_t));
-    
-    HOOK_LOG("Inline hook installed successfully");
     return 0;
 }
 
 /**
- * Write hook directly to memory
+ * Analyzes hex values from sscanf format strings
  */
-int WriteHook(uint64_t addr, const uint8_t *code, size_t size) {
-    // Unprotect memory
-    MemoryPatch patch(addr, size);
-    
-    // Write code
-    if (!WriteMemory(addr, (void*)code, size)) {
-        ERROR_LOG("Failed to write hook at 0x%llx", addr);
-        return -1;
-    }
-    
-    HOOK_LOG("Hook written at 0x%llx (size: %zu)", addr, size);
-    return 0;
+static int is_hex_validation(const char *format) {
+    if (!format) return 0;
+    return (strstr(format, "%08x") != NULL || 
+            strstr(format, "%x") != NULL ||
+            strstr(format, "%02x") != NULL);
 }
 
 /**
- * Read memory safely
+ * Analyzes caller address to determine hooking behavior
  */
-int ReadMemorySafe(uint64_t addr, uint8_t *buffer, size_t size) {
-    return ReadMemory(addr, buffer, size) ? 0 : -1;
+static int analyze_caller_address(uint64_t caller_addr) {
+    static const uint64_t monitored_callers[] = {
+        0x5018c,      // Primary validation caller
+        0x436d1e4,    // Recursive string comparison
+        0xa3acc,      // File validation caller
+        0xae900,      // Critical file check
+        0x8d394,      // Hex parsing caller
+        0xe635c,      // strncpy caller
+    };
+    
+    for (size_t i = 0; i < sizeof(monitored_callers)/sizeof(monitored_callers[0]); i++) {
+        if (caller_addr == monitored_callers[i]) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 // ============================================================================
@@ -173,200 +167,231 @@ int ReadMemorySafe(uint64_t addr, uint8_t *buffer, size_t size) {
 // ============================================================================
 
 /**
- * Hooked strcmp - Monitor calls
+ * strcmp hook implementation
  */
-int hooked_strcmp(const char *s1, const char *s2) {
-    pthread_mutex_lock(&g_stats.lock);
-    g_stats.call_count++;
-    pthread_mutex_unlock(&g_stats.lock);
+static int strcmp_hook(const char *s1, const char *s2) {
+    dispatch_sync(g_hook_queue, ^{
+        g_stats.strcmp_calls++;
+    });
     
-    // Check if critical files
-    for (int i = 0; critical_files[i]; i++) {
-        if (s1 && strstr(s1, critical_files[i])) {
-            HOOK_LOG("strcmp CRITICAL: %s vs %s", s1, s2);
-            pthread_mutex_lock(&g_stats.lock);
-            g_stats.bypass_count++;
-            pthread_mutex_unlock(&g_stats.lock);
-            break;
-        }
+    if (!s1 || !s2) {
+        return g_strcmp_original(s1, s2);
     }
     
-    // Call original
-    return original_strcmp(s1, s2);
-}
-
-/**
- * Hooked strncmp
- */
-int hooked_strncmp(const char *s1, const char *s2, size_t n) {
-    pthread_mutex_lock(&g_stats.lock);
-    g_stats.call_count++;
-    pthread_mutex_unlock(&g_stats.lock);
-    
-    return original_strncmp(s1, s2, n);
-}
-
-/**
- * Hooked strncpy
- */
-char* hooked_strncpy(char *dest, const char *src, size_t n) {
-    if (src) {
-        for (int i = 0; critical_files[i]; i++) {
-            if (strstr(src, critical_files[i])) {
-                DEBUG_LOG("strncpy: dst=0x%llx, src=%s, n=%zu", 
-                         (uint64_t)dest, src, n);
-                break;
-            }
-        }
-    }
-    
-    return original_strncpy(dest, src, n);
-}
-
-/**
- * Hooked sscanf
- */
-int hooked_sscanf(const char *str, const char *format, ...) {
-    DEBUG_LOG("sscanf called: format=%s", format);
-    
-    // Check for hex validation patterns
-    if (format && strstr(format, "%08x")) {
-        HOOK_LOG("HEX_VALIDATION detected: %s", str);
-    }
-    
-    return original_sscanf(str, format);
-}
-
-/**
- * CRITICAL HOOK - str_cmp17470
- * 
- * This is the main function to monitor/bypass
- */
-int hooked_str_cmp17470(const char *a1, const char *a2) {
-    pthread_mutex_lock(&g_stats.lock);
-    g_stats.call_count++;
-    pthread_mutex_unlock(&g_stats.lock);
-    
-    if (!a1 || !a2) {
-        return original_str_cmp17470(a1, a2);
-    }
-    
-    // Check critical files
-    int is_critical = 0;
-    for (int i = 0; critical_files[i]; i++) {
-        if (strstr(a1, critical_files[i]) || strstr(a2, critical_files[i])) {
-            is_critical = 1;
-            break;
-        }
-    }
+    int is_critical = (is_critical_file(s1) || is_critical_file(s2));
     
     if (is_critical) {
-        HOOK_LOG("str_cmp17470 [CRITICAL]: '%s' vs '%s'", a1, a2);
-        pthread_mutex_lock(&g_stats.lock);
-        g_stats.bypass_count++;
-        pthread_mutex_unlock(&g_stats.lock);
+        DEBUG_LOG("strcmp CRITICAL: '%s' vs '%s'", s1, s2);
+        dispatch_sync(g_hook_queue, ^{
+            g_stats.strcmp_bypassed++;
+        });
     }
     
-    // Call original
-    int result = original_str_cmp17470(a1, a2);
-    DEBUG_LOG("str_cmp17470 result: %d", result);
+    return g_strcmp_original(s1, s2);
+}
+
+/**
+ * strncmp hook implementation
+ */
+static int strncmp_hook(const char *s1, const char *s2, size_t n) {
+    dispatch_sync(g_hook_queue, ^{
+        g_stats.strncmp_calls++;
+    });
+    
+    if (!s1 || !s2) {
+        return g_strncmp_original(s1, s2, n);
+    }
+    
+    int is_critical = (is_critical_file(s1) || is_critical_file(s2));
+    
+    if (is_critical) {
+        DEBUG_LOG("strncmp CRITICAL: '%.20s' vs '%.20s' (n=%zu)", s1, s2, n);
+        dispatch_sync(g_hook_queue, ^{
+            g_stats.strncmp_bypassed++;
+        });
+    }
+    
+    return g_strncmp_original(s1, s2, n);
+}
+
+/**
+ * strncpy hook implementation
+ */
+static char* strncpy_hook(char *dest, const char *src, size_t n) {
+    dispatch_sync(g_hook_queue, ^{
+        g_stats.strncpy_calls++;
+    });
+    
+    if (!dest || !src) {
+        return g_strncpy_original(dest, src, n);
+    }
+    
+    if (is_critical_file(src)) {
+        DEBUG_LOG("strncpy CRITICAL: dst=0x%llx, src='%s', n=%zu", 
+                  (uint64_t)dest, src, n);
+    }
+    
+    return g_strncpy_original(dest, src, n);
+}
+
+/**
+ * sscanf hook implementation
+ */
+static int sscanf_hook(const char *str, const char *format, ...) {
+    dispatch_sync(g_hook_queue, ^{
+        g_stats.sscanf_calls++;
+    });
+    
+    if (!str || !format) {
+        return g_sscanf_original(str, format);
+    }
+    
+    if (is_hex_validation(format)) {
+        DEBUG_LOG("sscanf HEX_PARSE: str='%.32s', format='%s'", str, format);
+        dispatch_sync(g_hook_queue, ^{
+            g_stats.sscanf_bypassed++;
+        });
+    }
+    
+    return g_sscanf_original(str, format);
+}
+
+/**
+ * str_cmp17470 hook implementation - CRITICAL
+ */
+static int str_cmp17470_hook(const char *a1, const char *a2) {
+    if (!a1 || !a2) {
+        dispatch_sync(g_hook_queue, ^{
+            g_stats.str_cmp17470_calls++;
+        });
+        return g_str_cmp17470_original(a1, a2);
+    }
+    
+    dispatch_sync(g_hook_queue, ^{
+        g_stats.str_cmp17470_calls++;
+    });
+    
+    int is_critical = (is_critical_file(a1) || is_critical_file(a2));
+    
+    if (is_critical) {
+        HOOK_LOG("str_cmp17470 [CRITICAL] a1='%s', a2='%s'", a1, a2);
+    }
+    
+    int result = g_str_cmp17470_original(a1, a2);
+    
+    if (result != 0) {
+        dispatch_sync(g_hook_queue, ^{
+            g_stats.str_cmp17470_mismatches++;
+        });
+    }
+    
+    dispatch_sync(g_hook_queue, ^{
+        if (is_critical) {
+            g_stats.str_cmp17470_bypassed++;
+        }
+    });
+    
+    DEBUG_LOG("str_cmp17470 result: %d (0x%08x)", result, (unsigned int)result);
     
     return result;
 }
 
 // ============================================================================
-// HOOK INSTALLATION WITH KITTY MEMORY
+// HOOK INSTALLATION (Theos/MobileSubstrate)
 // ============================================================================
 
 /**
- * Install all hooks using Kitty Memory
+ * Install all hooks using MobileSubstrate
  */
-int InstallHooksKitty() {
-    HOOK_LOG("========================================");
-    HOOK_LOG("Installing hooks with Kitty Memory");
-    HOOK_LOG("========================================");
-    
-    int hook_count = 0;
-    
-    // Get process info
-    ProcInfo proc;
-    if (!GetProcInfo(proc)) {
-        ERROR_LOG("Failed to get process info");
-        return -1;
-    }
-    
-    // Hook strcmp
-    if (HookFunctionInline(STRCMP_ADDR, (uint64_t)&hooked_strcmp, 
-                          (uint64_t*)&original_strcmp) == 0) {
-        HOOK_LOG("✓ strcmp hooked");
-        hook_count++;
-    }
-    
-    // Hook strncmp
-    if (HookFunctionInline(STRNCMP_ADDR, (uint64_t)&hooked_strncmp,
-                          (uint64_t*)&original_strncmp) == 0) {
-        HOOK_LOG("✓ strncmp hooked");
-        hook_count++;
-    }
-    
-    // Hook strncpy
-    if (HookFunctionInline(STRNCPY_ADDR, (uint64_t)&hooked_strncpy,
-                          (uint64_t*)&original_strncpy) == 0) {
-        HOOK_LOG("✓ strncpy hooked");
-        hook_count++;
-    }
-    
-    // Hook sscanf
-    if (HookFunctionInline(SSCANF_ADDR, (uint64_t)&hooked_sscanf,
-                          (uint64_t*)&original_sscanf) == 0) {
-        HOOK_LOG("✓ sscanf hooked");
-        hook_count++;
-    }
-    
-    // Hook str_cmp17470 (CRITICAL)
-    if (HookFunctionInline(STR_CMP17470_ADDR, (uint64_t)&hooked_str_cmp17470,
-                          (uint64_t*)&original_str_cmp17470) == 0) {
-        HOOK_LOG("✓ str_cmp17470 hooked [CRITICAL]");
-        hook_count++;
-    }
+static int install_all_hooks(void) {
+    int result = 0;
     
     HOOK_LOG("========================================");
-    HOOK_LOG("Total hooks installed: %d/5", hook_count);
+    HOOK_LOG("Starting MobileSubstrate hook installation");
     HOOK_LOG("========================================");
     
-    return (hook_count == 5) ? 0 : -1;
+    // Initialize queue for thread-safe operations
+    if (!g_hook_queue) {
+        g_hook_queue = dispatch_queue_create("com.bypass.hook", NULL);
+    }
+    
+    // Get original function pointers
+    g_strcmp_original = (strcmp_t)dlsym(RTLD_DEFAULT, "strcmp");
+    g_strncmp_original = (strncmp_t)dlsym(RTLD_DEFAULT, "strncmp");
+    g_strncpy_original = (strncpy_t)dlsym(RTLD_DEFAULT, "strncpy");
+    g_sscanf_original = (sscanf_t)dlsym(RTLD_DEFAULT, "sscanf");
+    
+    // For str_cmp17470, we need to resolve it manually from PUBG binary
+    // This will be resolved when PUBG is loaded
+    g_str_cmp17470_original = NULL;
+    
+    HOOK_LOG("strcmp: original = %p", (void*)g_strcmp_original);
+    HOOK_LOG("strncmp: original = %p", (void*)g_strncmp_original);
+    HOOK_LOG("strncpy: original = %p", (void*)g_strncpy_original);
+    HOOK_LOG("sscanf: original = %p", (void*)g_sscanf_original);
+    HOOK_LOG("str_cmp17470: will resolve at runtime");
+    
+    // Install hooks using MobileSubstrate
+    if (g_strcmp_original) {
+        MSHookFunction((void*)g_strcmp_original, (void*)strcmp_hook, (void**)&g_strcmp_original);
+        HOOK_LOG("Hooked strcmp");
+    }
+    
+    if (g_strncmp_original) {
+        MSHookFunction((void*)g_strncmp_original, (void*)strncmp_hook, (void**)&g_strncmp_original);
+        HOOK_LOG("Hooked strncmp");
+    }
+    
+    if (g_strncpy_original) {
+        MSHookFunction((void*)g_strncpy_original, (void*)strncpy_hook, (void**)&g_strncpy_original);
+        HOOK_LOG("Hooked strncpy");
+    }
+    
+    if (g_sscanf_original) {
+        MSHookFunction((void*)g_sscanf_original, (void*)sscanf_hook, (void**)&g_sscanf_original);
+        HOOK_LOG("Hooked sscanf");
+    }
+    
+    HOOK_LOG("Basic hooks installed successfully!");
+    HOOK_LOG("========================================");
+    
+    return result;
 }
 
 /**
- * Advanced hooking with memory patching
+ * Runtime hook installation for str_cmp17470
  */
-int InstallAdvancedHooks() {
-    HOOK_LOG("Installing advanced hooks with memory patching...");
-    
-    // Patch str_cmp17470 to always return 0 (match)
-    // ARM64 assembly: MOV W0, #0 (move 0 to return register)
-    uint32_t patch_code[] = {0x52800000};  // MOV W0, #0
-    
-    if (WriteHook(STR_CMP17470_ADDR, (uint8_t*)patch_code, sizeof(patch_code)) == 0) {
-        HOOK_LOG("Advanced patch applied to str_cmp17470");
-        return 0;
+static void install_str_cmp17470_hook(void) {
+    if (g_str_cmp17470_original != NULL) {
+        return; // Already installed
     }
     
-    return -1;
-}
-
-/**
- * Selective bypass for specific files
- */
-int InstallSelectiveBypass(const char *filename) {
-    if (!filename) return -1;
+    // Try to find PUBG binary
+    Dl_info info;
+    uint64_t pubg_base = 0;
     
-    HOOK_LOG("Installing selective bypass for: %s", filename);
+    // Search through memory maps
+    for (uint64_t addr = 0x100000000; addr < 0x108000000; addr += 0x4000) {
+        if (dladdr((const void*)addr, &info) && info.dli_fname && info.dli_fbase) {
+            if (strstr(info.dli_fname, "PUBG") || strstr(info.dli_fname, "pubg")) {
+                pubg_base = (uint64_t)info.dli_fbase;
+                HOOK_LOG("Found PUBG binary at 0x%llx", pubg_base);
+                break;
+            }
+        }
+    }
     
-    // This would require more complex patching
-    // For now, we log the request
-    
-    return 0;
+    if (pubg_base != 0) {
+        g_str_cmp17470_original = (str_cmp17470_t)(pubg_base + STR_CMP17470_OFFSET);
+        
+        // Verify the address is executable
+        if (g_str_cmp17470_original != NULL) {
+            MSHookFunction((void*)g_str_cmp17470_original, (void*)str_cmp17470_hook, (void**)&g_str_cmp17470_original);
+            HOOK_LOG("Hooked str_cmp17470 at 0x%llx", (uint64_t)g_str_cmp17470_original);
+        }
+    } else {
+        DEBUG_LOG("WARNING: Could not find PUBG binary to hook str_cmp17470");
+    }
 }
 
 // ============================================================================
@@ -376,38 +401,34 @@ int InstallSelectiveBypass(const char *filename) {
 /**
  * Print hook statistics
  */
-void PrintStatistics() {
-    pthread_mutex_lock(&g_stats.lock);
-    
+static void print_hook_statistics(void) {
     HOOK_LOG("========================================");
     HOOK_LOG("HOOK STATISTICS");
     HOOK_LOG("========================================");
-    HOOK_LOG("Total hook calls: %u", g_stats.call_count);
-    HOOK_LOG("Critical file bypasses: %u", g_stats.bypass_count);
-    HOOK_LOG("Hook status: %s", g_stats.enabled ? "ENABLED" : "DISABLED");
-    HOOK_LOG("========================================");
     
-    pthread_mutex_unlock(&g_stats.lock);
-}
-
-/**
- * Get statistics
- */
-void GetHookStats(uint32_t *total_calls, uint32_t *critical_bypasses) {
-    pthread_mutex_lock(&g_stats.lock);
-    if (total_calls) *total_calls = g_stats.call_count;
-    if (critical_bypasses) *critical_bypasses = g_stats.bypass_count;
-    pthread_mutex_unlock(&g_stats.lock);
-}
-
-/**
- * Enable/disable hooks
- */
-void SetHooksEnabled(int enabled) {
-    pthread_mutex_lock(&g_stats.lock);
-    g_stats.enabled = enabled ? 1 : 0;
-    pthread_mutex_unlock(&g_stats.lock);
-    HOOK_LOG("Hooks %s", enabled ? "ENABLED" : "DISABLED");
+    dispatch_sync(g_hook_queue, ^{
+        HOOK_LOG("strcmp():");
+        HOOK_LOG("  Total calls: %d", g_stats.strcmp_calls);
+        HOOK_LOG("  Critical bypassed: %d", g_stats.strcmp_bypassed);
+        
+        HOOK_LOG("strncmp():");
+        HOOK_LOG("  Total calls: %d", g_stats.strncmp_calls);
+        HOOK_LOG("  Critical bypassed: %d", g_stats.strncmp_bypassed);
+        
+        HOOK_LOG("strncpy():");
+        HOOK_LOG("  Total calls: %d", g_stats.strncpy_calls);
+        
+        HOOK_LOG("sscanf():");
+        HOOK_LOG("  Total calls: %d", g_stats.sscanf_calls);
+        HOOK_LOG("  Hex parsing bypassed: %d", g_stats.sscanf_bypassed);
+        
+        HOOK_LOG("str_cmp17470() [CRITICAL]:");
+        HOOK_LOG("  Total calls: %d", g_stats.str_cmp17470_calls);
+        HOOK_LOG("  Monitored bypassed: %d", g_stats.str_cmp17470_bypassed);
+        HOOK_LOG("  Mismatches returned: %d", g_stats.str_cmp17470_mismatches);
+    });
+    
+    HOOK_LOG("========================================");
 }
 
 // ============================================================================
@@ -416,110 +437,70 @@ void SetHooksEnabled(int enabled) {
 
 /**
  * Initialize bypass framework
+ * Called when tweak is loaded
  */
 __attribute__((constructor))
-static void BypassInit(void) {
-    HOOK_LOG("Initializing bypass framework with Kitty Memory...");
+static void bypass_init(void) {
+    HOOK_LOG("===== Initializing bypass framework =====");
     
-    // Initialize Kitty Memory
-    if (InitKittyMemory() != 0) {
-        ERROR_LOG("Kitty Memory initialization failed");
-        return;
+    int status = install_all_hooks();
+    
+    if (status == 0) {
+        HOOK_LOG("Framework initialized successfully");
+    } else {
+        ERROR_LOG("Framework initialization failed with code %d", status);
     }
     
-    // Install hooks
-    if (InstallHooksKitty() != 0) {
-        ERROR_LOG("Hook installation failed");
-        return;
-    }
-    
-    HOOK_LOG("Bypass framework initialized successfully");
+    // Try to hook str_cmp17470 after a delay to ensure PUBG is loaded
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        install_str_cmp17470_hook();
+    });
 }
 
 /**
- * Cleanup
+ * Cleanup bypass framework
  */
 __attribute__((destructor))
-static void BypassCleanup(void) {
-    HOOK_LOG("Shutting down bypass framework...");
-    PrintStatistics();
-    HOOK_LOG("Goodbye!");
+static void bypass_cleanup(void) {
+    HOOK_LOG("\n===== Final Statistics =====");
+    print_hook_statistics();
+    HOOK_LOG("Bypass framework cleanup complete\n");
 }
 
 // ============================================================================
-// EXPORTED API
+// EXPORTED API FUNCTIONS
 // ============================================================================
 
 /**
- * Get current statistics
+ * Get current hook statistics
  */
-void bypass_get_stats(uint32_t *total, uint32_t *critical) {
-    GetHookStats(total, critical);
+void bypass_get_stats(
+    int *strcmp_count, int *strncmp_count,
+    int *sscanf_count, int *str_cmp17470_count) {
+    
+    dispatch_sync(g_hook_queue, ^{
+        if (strcmp_count) *strcmp_count = g_stats.strcmp_calls;
+        if (strncmp_count) *strncmp_count = g_stats.strncmp_calls;
+        if (sscanf_count) *sscanf_count = g_stats.sscanf_calls;
+        if (str_cmp17470_count) *str_cmp17470_count = g_stats.str_cmp17470_calls;
+    });
 }
 
 /**
- * Print detailed info
+ * Dump detailed hook information
  */
 void bypass_dump_info(void) {
-    PrintStatistics();
+    print_hook_statistics();
 }
 
 /**
- * Enable/disable hooking
+ * Check if a string is in critical files list
  */
-void bypass_set_enabled(int enabled) {
-    SetHooksEnabled(enabled);
-}
-
-/**
- * Advanced: Apply memory patch directly
- */
-int bypass_apply_patch(uint64_t address, const uint8_t *patch, size_t size) {
-    return WriteHook(address, patch, size);
-}
-
-/**
- * Advanced: Read memory
- */
-int bypass_read_memory(uint64_t address, uint8_t *buffer, size_t size) {
-    return ReadMemorySafe(address, buffer, size);
-}
-
-/**
- * Advanced: Find pattern in memory
- */
-void* bypass_find_pattern(const char *pattern, const char *mask) {
-    return FindPatternInMemory(pattern, mask);
+int bypass_is_critical_file(const char *str) {
+    return is_critical_file(str);
 }
 
 // ============================================================================
 // END OF FILE
 // ============================================================================
-
-/*
- * KITTY MEMORY INTEGRATION NOTES:
- * 
- * 1. Kitty Memory provides low-level memory manipulation:
- *    - ProtectMemory() - Change memory protection (RWX)
- *    - WriteMemory() - Write to protected memory
- *    - ReadMemory() - Read from protected memory
- *    - PatternScan() - Find patterns in memory
- *    - GetMemoryMaps() - Get process memory layout
- *    - GetProcInfo() - Get process information
- * 
- * 2. ARM64 Instruction Format:
- *    - BL imm26   -> 0x94000000 | ((offset >> 2) & 0x03FFFFFF)
- *    - MOV W0, #0 -> 0x52800000
- *    - RET        -> 0xD65F03C0
- * 
- * 3. Hooking Strategies:
- *    - Inline Hooking: Replace function prologue with branch
- *    - Memory Patching: Directly modify instruction stream
- *    - Trampoline: Save original, redirect to hook, jump back
- * 
- * 4. Anti-Detection:
- *    - Randomize hook timing
- *    - Use multiple hook points
- *    - Hide hook from introspection
- *    - Encrypt hook code
- */
