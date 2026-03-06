@@ -7,11 +7,11 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = ESP
 
-# bypass.cpp'yi ana dizinde varsayıyoruz
-ESP_FILES = bypass.cpp $(wildcard ESP/*.mm) $(wildcard ESP/*.cpp) $(wildcard SDK/*.cpp) $(wildcard ESP/imgui/*.mm) $(wildcard ESP/imgui/*.cpp)
+# bypass.cpp artık ESP klasörünün içinde olduğu için yolu güncelledik
+ESP_FILES = ESP/bypass.cpp $(wildcard ESP/*.mm) $(wildcard ESP/*.cpp) $(wildcard SDK/*.cpp) $(wildcard ESP/imgui/*.mm) $(wildcard ESP/imgui/*.cpp)
 
 ESP_FRAMEWORKS = IOKit UIKit Foundation Security QuartzCore CoreGraphics CoreText AVFoundation Accelerate GLKit SystemConfiguration GameController
-# BURASI KRİTİK: Substrate kütüphanesini bağladık
+# Substrate olmadan MSHookFunction çalışmaz
 ESP_LIBRARIES = substrate
 
 ESP_CCFLAGS = -w -std=gnu++14 -fno-rtti -fno-exceptions -DNDEBUG -Wno-module-import-in-extern-c
