@@ -1,59 +1,54 @@
-name: Projeyi Derle
+name: Otomatik Derleme (Theos)
 
 on:
   push:
-    branches: [ "main" ]
+    branches:
+      - main
+      - master
   pull_request:
-    branches: [ "main" ]
+    branches:
+      - main
+      - master
+  workflow_dispatch: # GitHub arayüzünden manuel tetikleme sağlar
 
 jobs:
   build:
+    name: Build Tweak
     runs-on: macos-latest
 
+    env:
+      THEOS: ${{ github.workspace }}/theos
+
     steps:
-    - name: Kodları Checkout Et
-      uses: actions/checkout@v4
-      with:
-        # Gerekirse alt modülleri de çekmek için bu satırı aktif edin
-        # submodules: 'recursive'
+      - name: Projeyi İndir (Checkout)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive # Eğer ImGui vb. kütüphaneler submodule ise gerekli
 
-    # DÜZELTME: Theos'u manuel olarak kurma adımı
-    # 'Theos/install-theos' aksiyonu yerine doğrudan kurulum yapıyoruz.
-    - name: Theos ve Bağımlılıkları Kur
-      run: |
-        # Homebrew'u güncelle ve ldid'yi kur (kod imzalama için gerekli)
-        brew install ldid
-        
-        # Theos'u GitHub'dan klonla
-        git clone --recursive https://github.com/theos/theos.git <LaTex>$HOME/theos
-        
-        # Theos'u PATH'e ekle, böylece 'make' komutu onu bulabilir
-        echo "$</LaTex>HOME/theos/bin" >> $GITHUB_PATH
-        
-        # Gerekli SDK'yı indir (Burada iOS 15.5 SDK'sı örnek olarak kullanılmıştır)
-        # Farklı bir SDK'ya ihtiyacınız varsa URL'yi değiştirebilirsiniz.
-        curl -LO https://github.com/theos/sdks/archive/refs/tags/15.5.zip
-        unzip 15.5.zip
-        
-        # SDK'yı Theos'un beklediği dizine taşı
-        mv sdks-15.5 $HOME/theos/sdks
-        
-        # İndirilen zip dosyasını temizle
-        rm 15.5.zip
+      - name: Gerekli Paketleri Kur
+        run: |
+          brew install ldid xz
 
-    - name: Projeyi Derle
-      id: build_step
-      run: make
+      - name: Theos'u Kur
+        run: |
+          git clone --recursive https://github.com/theos/theos.git ${{ env.THEOS }}
 
-    - name: Derleme Çıktısını Kontrol Et
-      if: always()
-      run: |
-        echo "Derleme sonrası dosya yapısı kontrol ediliyor..."
-        ls -R
+      - name: iOS SDK'larını Kur
+        run: |
+          git clone https://github.com/theos/sdks.git ${{ env.THEOS }}/sdks
 
-    - name: Derlenmiş Dosyaları Arşivle
-      uses: actions/upload-artifact@v4
-      if: steps.build_step.outcome == 'success'
-      with:
-        name: ESP-Tweak-Package
-        path: packages/*.deb
+      - name: Projeyi Derle
+        run: |
+          make clean
+          make
+          # Eğer projenizde 'control' dosyası varsa ve .deb paketi oluşturmak istiyorsanız 
+          # aşağıdaki satırın başındaki # işaretini kaldırın:
+          # make package
+
+      - name: Çıktıları Yükle (Artifacts)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ESP-Derlenmis-Dosyalar
+          path: |
+            .theos/obj/**/*.dylib
+            packages/*.deb
