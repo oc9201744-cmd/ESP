@@ -9,11 +9,11 @@ on:
     branches:
       - main
       - master
-  workflow_dispatch: # GitHub arayüzünden manuel tetikleme sağlar
+  workflow_dispatch:
 
 jobs:
   build:
-    name: Build Tweak
+    name: Tweak Derleme İşlemi
     runs-on: macos-latest
 
     env:
@@ -23,32 +23,37 @@ jobs:
       - name: Projeyi İndir (Checkout)
         uses: actions/checkout@v4
         with:
-          submodules: recursive # Eğer ImGui vb. kütüphaneler submodule ise gerekli
+          submodules: recursive
 
       - name: Gerekli Paketleri Kur
         run: |
           brew install ldid xz
 
-      - name: Theos'u Kur
+      - name: Theos Ortamını Hazırla
         run: |
+          # Temiz bir kurulum için varsa eski dizini siliyoruz
+          rm -rf ${{ env.THEOS }}
           git clone --recursive https://github.com/theos/theos.git ${{ env.THEOS }}
 
-      - name: iOS SDK'larını Kur
+      - name: iOS SDK'larını Güncelle
         run: |
+          # Çakışmayı önlemek için mevcut boş sdks klasörünü siliyoruz
+          rm -rf ${{ env.THEOS }}/sdks
           git clone https://github.com/theos/sdks.git ${{ env.THEOS }}/sdks
 
       - name: Projeyi Derle
         run: |
+          # Makefile içindeki değişkenleri kullanarak derleme yapar
           make clean
-          make
-          # Eğer projenizde 'control' dosyası varsa ve .deb paketi oluşturmak istiyorsanız 
-          # aşağıdaki satırın başındaki # işaretini kaldırın:
-          # make package
+          make -j$(sysctl -n hw.ncpu)
+          
+          # Eğer .deb paketi oluşturmak istiyorsanız aşağıdaki satırı aktif edin:
+          # make package FINALPACKAGE=1
 
-      - name: Çıktıları Yükle (Artifacts)
+      - name: Çıktıları Kaydet (Artifacts)
         uses: actions/upload-artifact@v4
         with:
-          name: ESP-Derlenmis-Dosyalar
+          name: ESP-Derleme-Ciktilari
           path: |
             .theos/obj/**/*.dylib
             packages/*.deb
