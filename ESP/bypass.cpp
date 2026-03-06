@@ -5,79 +5,61 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-// Orijinal fonksiyonlar
+// HATA BURADAYDI: GCD fonksiyonları için bu başlık şart
+#include <dispatch/dispatch.h> 
+
+// Orijinal fonksiyon saklayıcıları
 int (*orig_strcmp)(const char *s1, const char *s2);
 uintptr_t (*orig_str_cmp17470)(const char *a1, const char *a2);
 int (*orig_access)(const char *path, int mode);
-int (*orig_stat)(const char *path, struct stat *buf);
 
-// TESPİT EDİLMESİNİ İSTEMEDİĞİMİZ KELİMELER
-bool is_sus_string(const char *str) {
+// Filtre listesi
+bool is_cheat_file(const char *str) {
     if (!str) return false;
     static const char* blacklist[] = {
-        "Shadow.dylib", "app.dylib", "dobby", "Substrate", 
-        "CydiaSubstrate", "tcjcfg.dat", "__HOOK__TEXT", "Library/MobileSubstrate"
+        "dobby", "Shadow.dylib", "app.dylib", "Substrate", 
+        "AppSyncUnified", "tcjcfg.dat", "__HOOK__TEXT", 
+        "Library/MobileSubstrate", "TweakInject"
     };
     for (const char* item : blacklist) {
-        if (strstr(str, item) != nullptr) return true;
+        if (strcasestr(str, item) != nullptr) return true;
     }
     return false;
 }
 
-// 1. ÖZEL FONKSİYON BYPASS (0x17470)
-// Log notu: "ret 0 mean ok they are same"
+// 0x17470 Bypass
 uintptr_t fake_str_cmp17470(const char *a1, const char *a2) {
-    if (is_sus_string(a1) || is_sus_string(a2)) {
-        // Eğer bizim hile dosyamız sorgulanıyorsa, "0" dönme (aynı değil de).
-        // Loglardaki orijinal hata kodunu (farklılık kodunu) döndürüyoruz.
-        return 4294967279; 
+    if (is_cheat_file(a1) || is_cheat_file(a2)) {
+        return 4294967279; // Loglarındaki "farklı" sonucu
     }
     return orig_str_cmp17470(a1, a2);
 }
 
-// 2. DOSYA VARLIĞINI GİZLEME (access & stat)
-// Oyun "Shadow.dylib var mı?" diye sorarsa "Hayır" (-1) cevabı verir.
+// Access Bypass
 int fake_access(const char *path, int mode) {
-    if (is_sus_string(path)) {
-        return -1; 
-    }
+    if (is_cheat_file(path)) return -1;
     return orig_access(path, mode);
 }
 
-int fake_stat(const char *path, struct stat *buf) {
-    if (is_sus_string(path)) {
-        return -1;
-    }
-    return orig_stat(path, buf);
-}
-
-// 3. STANDART STRCMP BYPASS
+// Strcmp Bypass
 int fake_strcmp(const char *s1, const char *s2) {
-    if (is_sus_string(s1) || is_sus_string(s2)) {
-        return 1; // 0 dönmezse "eşleşmedi" demektir.
-    }
+    if (is_cheat_file(s1) || is_cheat_file(s2)) return 1;
     return orig_strcmp(s1, s2);
 }
 
-void start_bypass() {
+void init_bypass_system() {
     uintptr_t base = (uintptr_t)_dyld_get_image_header(0);
-    
-    // Substrate Hooking
     if (base > 0) {
-        // Loglardaki kritik fonksiyon
         MSHookFunction((void *)(base + 0x17470), (void *)fake_str_cmp17470, (void **)&orig_str_cmp17470);
-        
-        // Sistem çağrılarını gizle
         MSHookFunction((void *)strcmp, (void *)fake_strcmp, (void **)&orig_strcmp);
         MSHookFunction((void *)access, (void *)fake_access, (void **)&orig_access);
-        MSHookFunction((void *)stat, (void *)fake_stat, (void **)&orig_stat);
     }
 }
 
 __attribute__((constructor))
-static void initialize() {
-    // Oyunun tam yüklenmesi için kısa bir bekleme gerekebilir
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-        start_bypass();
+static void load() {
+    // dispatch_get_main_queue artık hata vermeyecek
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        init_bypass_system();
     });
 }
