@@ -14,28 +14,43 @@ jobs:
     - name: Kodları Checkout Et
       uses: actions/checkout@v4
       with:
-        # submodules: 'recursive' # Eğer alt modül kullanıyorsanız bu satırı aktif edin
+        # Gerekirse alt modülleri de çekmek için bu satırı aktif edin
+        # submodules: 'recursive'
 
-    - name: Theos Kurulumu
-      uses: Theos/install-theos@v1
+    # DÜZELTME: Theos'u manuel olarak kurma adımı
+    # 'Theos/install-theos' aksiyonu yerine doğrudan kurulum yapıyoruz.
+    - name: Theos ve Bağımlılıkları Kur
+      run: |
+        # Homebrew'u güncelle ve ldid'yi kur (kod imzalama için gerekli)
+        brew install ldid
+        
+        # Theos'u GitHub'dan klonla
+        git clone --recursive https://github.com/theos/theos.git <LaTex>$HOME/theos
+        
+        # Theos'u PATH'e ekle, böylece 'make' komutu onu bulabilir
+        echo "$</LaTex>HOME/theos/bin" >> $GITHUB_PATH
+        
+        # Gerekli SDK'yı indir (Burada iOS 15.5 SDK'sı örnek olarak kullanılmıştır)
+        # Farklı bir SDK'ya ihtiyacınız varsa URL'yi değiştirebilirsiniz.
+        curl -LO https://github.com/theos/sdks/archive/refs/tags/15.5.zip
+        unzip 15.5.zip
+        
+        # SDK'yı Theos'un beklediği dizine taşı
+        mv sdks-15.5 $HOME/theos/sdks
+        
+        # İndirilen zip dosyasını temizle
+        rm 15.5.zip
 
-    # 'id' ekleyerek bu adımın sonucunu daha sonra kullanabiliriz
     - name: Projeyi Derle
       id: build_step
       run: make
 
-    # YENİ ADIM: Derleme çıktısını kontrol et
-    # Bu adım, 'packages' dizinini ve içindekileri listeleyerek hata ayıklamayı kolaylaştırır.
-    # 'if: always()' sayesinde önceki adım başarısız olsa bile çalışır.
     - name: Derleme Çıktısını Kontrol Et
       if: always()
       run: |
         echo "Derleme sonrası dosya yapısı kontrol ediliyor..."
         ls -R
 
-    # DÜZELTİLMİŞ ADIM: Derlenmiş Dosyaları Arşivle
-    # Sadece 'build_step' başarılı olduğunda çalışır.
-    # Bu, 'make' komutu hata verirse bu adımın atlanmasını ve hata vermemesini sağlar.
     - name: Derlenmiş Dosyaları Arşivle
       uses: actions/upload-artifact@v4
       if: steps.build_step.outcome == 'success'
