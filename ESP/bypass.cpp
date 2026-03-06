@@ -1,12 +1,12 @@
 /**
  * ============================================================================
- * iOS PUBG str_cmp17470 Bypass & Hooking Framework (Theos Edition)
+ * iOS PUBG str_cmp17470 Bypass & Hooking Framework (Dobby Edition)
  * ============================================================================
  * 
  * Analiz Verisi: str_cmp17470.txt
  * Amaç: str_cmp17470 fonksiyonunu hook ederek detektisyonu bypass etmek
  * Hedef: iOS PUBG 4.2
- * Framework: Theos + MobileSubstrate
+ * Framework: Dobby (Advanced Memory Hooking)
  * 
  * Hooked Fonksiyonlar:
  *  - strcmp (0x10bcc2eb8)
@@ -28,7 +28,12 @@
 #include <unistd.h>
 #include <objc/runtime.h>
 #include <dispatch/dispatch.h>
-#include <substrate.h>
+
+// ============================================================================
+// DOBBY FRAMEWORK INCLUDES
+// ============================================================================
+
+#include "dobby.h"
 
 // ============================================================================
 // MACRO DEFINITIONS & CONSTANTS
@@ -74,6 +79,13 @@ static strncmp_t g_strncmp_original = NULL;
 static strncpy_t g_strncpy_original = NULL;
 static sscanf_t g_sscanf_original = NULL;
 static str_cmp17470_t g_str_cmp17470_original = NULL;
+
+// Dobby hook handles
+static dobby_hook_handle g_strcmp_handle = NULL;
+static dobby_hook_handle g_strncmp_handle = NULL;
+static dobby_hook_handle g_strncpy_handle = NULL;
+static dobby_hook_handle g_sscanf_handle = NULL;
+static dobby_hook_handle g_str_cmp17470_handle = NULL;
 
 // Hook statistics
 static struct {
@@ -297,100 +309,144 @@ static int str_cmp17470_hook(const char *a1, const char *a2) {
 }
 
 // ============================================================================
-// HOOK INSTALLATION (Theos/MobileSubstrate)
+// DOBBY HOOK INSTALLATION
 // ============================================================================
 
 /**
- * Install all hooks using MobileSubstrate
+ * Install hook using Dobby framework
+ */
+static dobby_hook_handle dobby_install_hook(
+    const char *target_name,
+    void *target_addr,
+    void *hook_func,
+    void **original) {
+    
+    if (!target_addr || !hook_func) {
+        ERROR_LOG("dobby_install_hook: Invalid parameters for %s", target_name);
+        return NULL;
+    }
+    
+    // Hook using Dobby
+    dobby_hook_handle handle = DobbyHook(target_addr, hook_func, (void**)original);
+    
+    if (!handle) {
+        ERROR_LOG("Failed to hook %s at 0x%llx with Dobby", target_name, (uint64_t)target_addr);
+        return NULL;
+    }
+    
+    HOOK_LOG("Dobby hooked %s @ 0x%llx", target_name, (uint64_t)target_addr);
+    return handle;
+}
+
+/**
+ * Install all hooks using Dobby
  */
 static int install_all_hooks(void) {
     int result = 0;
     
     HOOK_LOG("========================================");
-    HOOK_LOG("Starting MobileSubstrate hook installation");
+    HOOK_LOG("Starting Dobby hook installation");
     HOOK_LOG("========================================");
+    
+    // Initialize Dobby
+    DobbyInitialize();
+    HOOK_LOG("Dobby initialized");
     
     // Initialize queue for thread-safe operations
     if (!g_hook_queue) {
         g_hook_queue = dispatch_queue_create("com.bypass.hook", NULL);
     }
     
-    // Get original function pointers
+    // Get original function pointers using dlsym
     g_strcmp_original = (strcmp_t)dlsym(RTLD_DEFAULT, "strcmp");
     g_strncmp_original = (strncmp_t)dlsym(RTLD_DEFAULT, "strncmp");
     g_strncpy_original = (strncpy_t)dlsym(RTLD_DEFAULT, "strncpy");
     g_sscanf_original = (sscanf_t)dlsym(RTLD_DEFAULT, "sscanf");
     
-    // For str_cmp17470, we need to resolve it manually from PUBG binary
-    // This will be resolved when PUBG is loaded
-    g_str_cmp17470_original = NULL;
-    
     HOOK_LOG("strcmp: original = %p", (void*)g_strcmp_original);
     HOOK_LOG("strncmp: original = %p", (void*)g_strncmp_original);
     HOOK_LOG("strncpy: original = %p", (void*)g_strncpy_original);
     HOOK_LOG("sscanf: original = %p", (void*)g_sscanf_original);
-    HOOK_LOG("str_cmp17470: will resolve at runtime");
     
-    // Install hooks using MobileSubstrate
+    // Install hooks using Dobby
     if (g_strcmp_original) {
-        MSHookFunction((void*)g_strcmp_original, (void*)strcmp_hook, (void**)&g_strcmp_original);
-        HOOK_LOG("Hooked strcmp");
+        g_strcmp_handle = dobby_install_hook("strcmp", (void*)g_strcmp_original, 
+                                             (void*)strcmp_hook, (void**)&g_strcmp_original);
+        if (!g_strcmp_handle) result = -1;
     }
     
     if (g_strncmp_original) {
-        MSHookFunction((void*)g_strncmp_original, (void*)strncmp_hook, (void**)&g_strncmp_original);
-        HOOK_LOG("Hooked strncmp");
+        g_strncmp_handle = dobby_install_hook("strncmp", (void*)g_strncmp_original, 
+                                              (void*)strncmp_hook, (void**)&g_strncmp_original);
+        if (!g_strncmp_handle) result = -1;
     }
     
     if (g_strncpy_original) {
-        MSHookFunction((void*)g_strncpy_original, (void*)strncpy_hook, (void**)&g_strncpy_original);
-        HOOK_LOG("Hooked strncpy");
+        g_strncpy_handle = dobby_install_hook("strncpy", (void*)g_strncpy_original, 
+                                              (void*)strncpy_hook, (void**)&g_strncpy_original);
+        if (!g_strncpy_handle) result = -1;
     }
     
     if (g_sscanf_original) {
-        MSHookFunction((void*)g_sscanf_original, (void*)sscanf_hook, (void**)&g_sscanf_original);
-        HOOK_LOG("Hooked sscanf");
+        g_sscanf_handle = dobby_install_hook("sscanf", (void*)g_sscanf_original, 
+                                             (void*)sscanf_hook, (void**)&g_sscanf_original);
+        if (!g_sscanf_handle) result = -1;
     }
     
-    HOOK_LOG("Basic hooks installed successfully!");
+    HOOK_LOG("Basic hooks installed with Dobby");
     HOOK_LOG("========================================");
     
     return result;
 }
 
 /**
- * Runtime hook installation for str_cmp17470
+ * Install str_cmp17470 hook at runtime
  */
 static void install_str_cmp17470_hook(void) {
-    if (g_str_cmp17470_original != NULL) {
+    if (g_str_cmp17470_handle != NULL) {
         return; // Already installed
     }
     
-    // Try to find PUBG binary
+    // Find PUBG binary base address
     Dl_info info;
     uint64_t pubg_base = 0;
     
-    // Search through memory maps
+    // Search for PUBG binary
     for (uint64_t addr = 0x100000000; addr < 0x108000000; addr += 0x4000) {
         if (dladdr((const void*)addr, &info) && info.dli_fname && info.dli_fbase) {
             if (strstr(info.dli_fname, "PUBG") || strstr(info.dli_fname, "pubg")) {
                 pubg_base = (uint64_t)info.dli_fbase;
-                HOOK_LOG("Found PUBG binary at 0x%llx", pubg_base);
+                HOOK_LOG("Found PUBG binary at 0x%llx from %s", pubg_base, info.dli_fname);
                 break;
             }
         }
     }
     
-    if (pubg_base != 0) {
-        g_str_cmp17470_original = (str_cmp17470_t)(pubg_base + STR_CMP17470_OFFSET);
-        
-        // Verify the address is executable
-        if (g_str_cmp17470_original != NULL) {
-            MSHookFunction((void*)g_str_cmp17470_original, (void*)str_cmp17470_hook, (void**)&g_str_cmp17470_original);
-            HOOK_LOG("Hooked str_cmp17470 at 0x%llx", (uint64_t)g_str_cmp17470_original);
-        }
+    if (pubg_base == 0) {
+        DEBUG_LOG("WARNING: Could not find PUBG binary");
+        return;
+    }
+    
+    // Calculate str_cmp17470 address
+    g_str_cmp17470_original = (str_cmp17470_t)(pubg_base + STR_CMP17470_OFFSET);
+    
+    if (g_str_cmp17470_original == NULL) {
+        ERROR_LOG("str_cmp17470 address is NULL");
+        return;
+    }
+    
+    // Hook using Dobby
+    g_str_cmp17470_handle = dobby_install_hook(
+        "str_cmp17470",
+        (void*)g_str_cmp17470_original,
+        (void*)str_cmp17470_hook,
+        (void**)&g_str_cmp17470_original
+    );
+    
+    if (g_str_cmp17470_handle) {
+        HOOK_LOG("str_cmp17470 hooked successfully");
     } else {
-        DEBUG_LOG("WARNING: Could not find PUBG binary to hook str_cmp17470");
+        ERROR_LOG("Failed to hook str_cmp17470");
     }
 }
 
@@ -437,21 +493,20 @@ static void print_hook_statistics(void) {
 
 /**
  * Initialize bypass framework
- * Called when tweak is loaded
  */
 __attribute__((constructor))
 static void bypass_init(void) {
-    HOOK_LOG("===== Initializing bypass framework =====");
+    HOOK_LOG("===== Dobby Bypass Framework Initializing =====");
     
     int status = install_all_hooks();
     
     if (status == 0) {
         HOOK_LOG("Framework initialized successfully");
     } else {
-        ERROR_LOG("Framework initialization failed with code %d", status);
+        ERROR_LOG("Framework initialization had errors (code %d)", status);
     }
     
-    // Try to hook str_cmp17470 after a delay to ensure PUBG is loaded
+    // Try to hook str_cmp17470 after PUBG is loaded
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         install_str_cmp17470_hook();
@@ -465,6 +520,14 @@ __attribute__((destructor))
 static void bypass_cleanup(void) {
     HOOK_LOG("\n===== Final Statistics =====");
     print_hook_statistics();
+    
+    // Unhook all using Dobby
+    if (g_strcmp_handle) DobbyUnhook(g_strcmp_handle);
+    if (g_strncmp_handle) DobbyUnhook(g_strncmp_handle);
+    if (g_strncpy_handle) DobbyUnhook(g_strncpy_handle);
+    if (g_sscanf_handle) DobbyUnhook(g_sscanf_handle);
+    if (g_str_cmp17470_handle) DobbyUnhook(g_str_cmp17470_handle);
+    
     HOOK_LOG("Bypass framework cleanup complete\n");
 }
 
