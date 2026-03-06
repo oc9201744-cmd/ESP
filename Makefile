@@ -7,14 +7,13 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = ESP
 
-# bypass.cpp artık ESP klasörünün içinde olduğu için yolu güncelledik
+# bypass.cpp yolunu kontrol et
 ESP_FILES = ESP/bypass.cpp $(wildcard ESP/*.mm) $(wildcard ESP/*.cpp) $(wildcard SDK/*.cpp) $(wildcard ESP/imgui/*.mm) $(wildcard ESP/imgui/*.cpp)
 
-ESP_FRAMEWORKS = IOKit UIKit Foundation Security QuartzCore CoreGraphics CoreText AVFoundation Accelerate GLKit SystemConfiguration GameController
-# Substrate olmadan MSHookFunction çalışmaz
-ESP_LIBRARIES = substrate
+# JB olmadığı için substrate SİLİNDİ, Dobby dosyalarını buraya ekle (eğer lib olarak varsa)
+# Eğer Dobby'yi kaynak kod olarak eklediysen ESP_FILES içinde olmalı.
+ESP_LIBRARIES = dobby 
 
-ESP_CCFLAGS = -w -std=gnu++14 -fno-rtti -fno-exceptions -DNDEBUG -Wno-module-import-in-extern-c
-ESP_CFLAGS = -w -fobjc-arc -Wno-deprecated-declarations -Wno-unused-variable -Wno-unused-value
+ESP_FRAMEWORKS = UIKit Foundation Security QuartzCore CoreGraphics AVFoundation
 
 include $(THEOS_MAKE_PATH)/tweak.mk
