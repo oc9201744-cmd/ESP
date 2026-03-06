@@ -1,65 +1,50 @@
-#include <substrate.h>
 #include <string.h>
 #include <stdint.h>
 #include <mach-o/dyld.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "dobby.h" // Dobby başlık dosyasının yolu doğru olmalı
 
-// HATA BURADAYDI: GCD fonksiyonları için bu başlık şart
-#include <dispatch/dispatch.h> 
-
-// Orijinal fonksiyon saklayıcıları
-int (*orig_strcmp)(const char *s1, const char *s2);
+// Orijinal fonksiyonlar
 uintptr_t (*orig_str_cmp17470)(const char *a1, const char *a2);
-int (*orig_access)(const char *path, int mode);
+int (*orig_strcmp)(const char *s1, const char *s2);
 
-// Filtre listesi
-bool is_cheat_file(const char *str) {
+// Filtreleme
+bool is_sus(const char *str) {
     if (!str) return false;
-    static const char* blacklist[] = {
-        "dobby", "Shadow.dylib", "app.dylib", "Substrate", 
-        "AppSyncUnified", "tcjcfg.dat", "__HOOK__TEXT", 
-        "Library/MobileSubstrate", "TweakInject"
-    };
-    for (const char* item : blacklist) {
-        if (strcasestr(str, item) != nullptr) return true;
+    if (strstr(str, "dobby") || strstr(str, "Shadow") || strstr(str, "__HOOK__TEXT")) {
+        return true;
     }
     return false;
 }
 
-// 0x17470 Bypass
+// Hook Fonksiyonları
 uintptr_t fake_str_cmp17470(const char *a1, const char *a2) {
-    if (is_cheat_file(a1) || is_cheat_file(a2)) {
-        return 4294967279; // Loglarındaki "farklı" sonucu
+    if (is_sus(a1) || is_sus(a2)) {
+        return 4294967279; 
     }
     return orig_str_cmp17470(a1, a2);
 }
 
-// Access Bypass
-int fake_access(const char *path, int mode) {
-    if (is_cheat_file(path)) return -1;
-    return orig_access(path, mode);
-}
-
-// Strcmp Bypass
 int fake_strcmp(const char *s1, const char *s2) {
-    if (is_cheat_file(s1) || is_cheat_file(s2)) return 1;
+    if (is_sus(s1) || is_sus(s2)) {
+        return 1; 
+    }
     return orig_strcmp(s1, s2);
 }
 
-void init_bypass_system() {
+void install_dobby_hooks() {
     uintptr_t base = (uintptr_t)_dyld_get_image_header(0);
-    if (base > 0) {
-        MSHookFunction((void *)(base + 0x17470), (void *)fake_str_cmp17470, (void **)&orig_str_cmp17470);
-        MSHookFunction((void *)strcmp, (void *)fake_strcmp, (void **)&orig_strcmp);
-        MSHookFunction((void *)access, (void *)fake_access, (void **)&orig_access);
+    
+    if (base != 0) {
+        // Dobby ile Hook Atma (Substrate yerine)
+        DobbyHook((void *)(base + 0x17470), (void *)fake_str_cmp17470, (void **)&orig_str_cmp17470);
+        DobbyHook((void *)strcmp, (void *)fake_strcmp, (void **)&orig_strcmp);
     }
 }
 
 __attribute__((constructor))
 static void load() {
-    // dispatch_get_main_queue artık hata vermeyecek
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        init_bypass_system();
-    });
+    // Jailbreak olmayan cihazlarda constructor anında hook atmak daha sağlıklıdır
+    install_dobby_hooks();
 }
