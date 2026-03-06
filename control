@@ -1,0 +1,9 @@
+Package: my
+Name: Safe Hack
+Depends: firmware (>= 5.0), mobilesubstrate
+Version: 3.4
+Architecture: iphoneos-arm
+Description: EL PABLO
+Maintainer: B69
+Author: Bro
+Section: Tweaks
